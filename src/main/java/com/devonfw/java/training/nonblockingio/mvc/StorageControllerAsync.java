@@ -10,9 +10,8 @@ import javax.servlet.WriteListener;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
-import com.devonfw.java.training.nonblockingio.service.StorageService;
-import com.devonfw.java.training.nonblockingio.service.exception.StorageFileNotFoundException;
-
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
@@ -29,76 +28,84 @@ import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
+import com.devonfw.java.training.nonblockingio.service.StorageService;
+import com.devonfw.java.training.nonblockingio.service.exception.StorageFileNotFoundException;
+
 @Controller
 @RequestMapping("mvc")
 public class StorageControllerAsync {
 
-    @Autowired
-    private StorageService storageService;
+  /** Logger instance. */
+  private static final Logger LOG = LoggerFactory.getLogger(StorageControllerAsync.class);
 
-    @GetMapping("storage-async")
-    public String listUploadedFiles(Model model) throws IOException {
+  @Autowired
+  private StorageService storageService;
 
-        model.addAttribute("files", storageService.loadAll()
-                .map(path -> "/mvc/files-async/" + path.getFileName().toString()).collect(Collectors.toList()));
+  @GetMapping("storage-async")
+  public String listUploadedFiles(Model model) throws IOException {
 
-        return "storage-async";
-    }
+    model.addAttribute("files", this.storageService.loadAll()
+        .map(path -> "/mvc/files-async/" + path.getFileName().toString()).collect(Collectors.toList()));
 
-    @GetMapping("files-async/{filename:.+}")
-    @ResponseBody
-    public void serveFile(@PathVariable String filename, HttpServletRequest request, HttpServletResponse response)
-            throws IOException {
-        Resource file = storageService.loadAsResource(filename);
-        response.addHeader(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + file.getFilename() + "\"");
+    return "storage-async";
+  }
 
-        ServletOutputStream output = response.getOutputStream();
-        AsyncContext context = request.startAsync();
+  @GetMapping("files-async/{filename:.+}")
+  @ResponseBody
+  public void serveFile(@PathVariable String filename, HttpServletRequest request, HttpServletResponse response)
+      throws IOException {
 
-        // context.setTimeout(2000); // TODO does not work, why
-        output.setWriteListener(new WriteListener() {
-            @Override
-            public void onWritePossible() throws IOException {
-                InputStream input = file.getInputStream();
-                byte[] buffer = new byte[1024];
-                while (output.isReady()) {
-                    int length = input.read(buffer);
-                    if (length > 0) {
-                        output.write(buffer, 0, length);
-                        try {
-                            Thread.sleep(5000);
-                        } catch (InterruptedException e) {
-                            // ignore
-                        }
-                    } else {
-                        output.flush();
-                        context.complete();
-                        return;
-                    }
-                }
+    String clientId = request.getParameter("clientId");
+    Resource file = this.storageService.loadAsResource(filename);
+    InputStream input = file.getInputStream();
+    response.addHeader(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + file.getFilename() + "\"");
 
-            }
+    ServletOutputStream output = response.getOutputStream();
+    AsyncContext context = request.startAsync();
+    context.setTimeout(0);
 
-            @Override
-            public void onError(Throwable t) {
-                context.complete();
-            }
-        });
-    }
+    output.setWriteListener(new WriteListener() {
+      @Override
+      public void onWritePossible() throws IOException {
 
-    @PostMapping("upload-async")
-    public String handleFileUpload(@RequestParam("file") MultipartFile file, RedirectAttributes redirectAttributes) {
+        byte[] buffer = new byte[1024];
+        while (output.isReady()) {
+          int length = input.read(buffer);
+          if (length > 0) {
+            LOG.info("Client {},  writing {} bytes", clientId, length);
+            output.write(buffer, 0, length);
+          } else {
+            LOG.info("Client {} - flush", clientId);
+            output.flush();
+            context.complete();
+            return;
+          }
+        }
 
-        storageService.store(file);
-        redirectAttributes.addFlashAttribute("message",
-                "You successfully uploaded " + file.getOriginalFilename() + "!");
+      }
 
-        return "redirect:/mvc/storage-async";
-    }
+      @Override
+      public void onError(Throwable t) {
 
-    @ExceptionHandler(StorageFileNotFoundException.class)
-    public ResponseEntity<?> handleStorageFileNotFound(StorageFileNotFoundException exc) {
-        return ResponseEntity.notFound().build();
-    }
+        LOG.error("ERROR", t);
+        context.complete();
+      }
+    });
+  }
+
+  @PostMapping("upload-async")
+  public String handleFileUpload(@RequestParam("file") MultipartFile file, RedirectAttributes redirectAttributes) {
+
+    this.storageService.store(file);
+    redirectAttributes.addFlashAttribute("message", "You successfully uploaded " + file.getOriginalFilename() + "!");
+
+    return "redirect:/mvc/storage-async";
+  }
+
+  @ExceptionHandler(StorageFileNotFoundException.class)
+  public ResponseEntity<?> handleStorageFileNotFound(StorageFileNotFoundException exc) {
+
+    return ResponseEntity.notFound().build();
+  }
 
 }

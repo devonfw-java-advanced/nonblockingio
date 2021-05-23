@@ -1,11 +1,15 @@
 package com.devonfw.java.training.nonblockingio.mvc;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.stream.Collectors;
 
-import com.devonfw.java.training.nonblockingio.service.StorageService;
-import com.devonfw.java.training.nonblockingio.service.exception.StorageFileNotFoundException;
+import javax.servlet.ServletOutputStream;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
@@ -20,52 +24,69 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.multipart.MultipartFile;
-import org.springframework.web.servlet.mvc.method.annotation.MvcUriComponentsBuilder;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
+
+import com.devonfw.java.training.nonblockingio.service.StorageService;
+import com.devonfw.java.training.nonblockingio.service.exception.StorageFileNotFoundException;
 
 @Controller
 @RequestMapping("mvc")
 public class StorageController {
 
-    @Autowired
-    private StorageService storageService;
+  /** Logger instance. */
+  private static final Logger LOG = LoggerFactory.getLogger(StorageController.class);
 
-    @GetMapping("storage")
-    public String listUploadedFiles(Model model) throws IOException {
+  @Autowired
+  private StorageService storageService;
 
-        model.addAttribute("files",
-                storageService.loadAll()
-                        .map(path -> MvcUriComponentsBuilder
-                                .fromMethodName(StorageController.class, "serveFile", path.getFileName().toString())
-                                .build().toUri().toString())
-                        .collect(Collectors.toList()));
+  @GetMapping("storage")
+  public String listUploadedFiles(Model model) throws IOException {
 
-        return "storage";
+    model.addAttribute("files", this.storageService.loadAll().map(path -> "/mvc/files/" + path.getFileName().toString())
+        .collect(Collectors.toList()));
+
+    return "storage";
+  }
+
+  @GetMapping("files/{filename:.+}")
+  @ResponseBody
+  public void serveFile(@PathVariable String filename, HttpServletRequest request, HttpServletResponse response)
+      throws IOException {
+
+    String clientId = request.getParameter("clientId");
+    Resource file = this.storageService.loadAsResource(filename);
+    InputStream input = file.getInputStream();
+    response.addHeader(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + file.getFilename() + "\"");
+    ServletOutputStream output = response.getOutputStream();
+
+    byte[] buffer = new byte[1024];
+    while (true) {
+      int length = input.read(buffer);
+      if (length > 0) {
+        LOG.info("Client {},  writing {} bytes", clientId, length);
+        output.write(buffer, 0, length);
+      } else {
+        LOG.info("Client {} - flush", clientId);
+        output.flush();
+        return;
+      }
     }
 
-    @GetMapping("files/{filename:.+}")
-    @ResponseBody
-    public ResponseEntity<Resource> serveFile(@PathVariable String filename) {
+  }
 
-        Resource file = storageService.loadAsResource(filename);
-        return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + file.getFilename() + "\"")
-                .body(file);
-    }
+  @PostMapping("upload")
+  public String handleFileUpload(@RequestParam("file") MultipartFile file, RedirectAttributes redirectAttributes) {
 
-    @PostMapping("upload")
-    public String handleFileUpload(@RequestParam("file") MultipartFile file, RedirectAttributes redirectAttributes) {
+    this.storageService.store(file);
+    redirectAttributes.addFlashAttribute("message", "You successfully uploaded " + file.getOriginalFilename() + "!");
 
-        storageService.store(file);
-        redirectAttributes.addFlashAttribute("message",
-                "You successfully uploaded " + file.getOriginalFilename() + "!");
+    return "redirect:/mvc/storage";
+  }
 
-        return "redirect:/mvc/storage";
-    }
+  @ExceptionHandler(StorageFileNotFoundException.class)
+  public ResponseEntity<?> handleStorageFileNotFound(StorageFileNotFoundException exc) {
 
-    @ExceptionHandler(StorageFileNotFoundException.class)
-    public ResponseEntity<?> handleStorageFileNotFound(StorageFileNotFoundException exc) {
-        return ResponseEntity.notFound().build();
-    }
+    return ResponseEntity.notFound().build();
+  }
 
 }
