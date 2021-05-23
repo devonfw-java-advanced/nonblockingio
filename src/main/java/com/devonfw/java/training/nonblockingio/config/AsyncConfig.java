@@ -2,14 +2,11 @@ package com.devonfw.java.training.nonblockingio.config;
 
 import java.util.concurrent.Executor;
 
-import org.springframework.boot.web.servlet.ServletRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
-
-import com.devonfw.java.training.nonblockingio.mvc.CustomServlet;
 
 @Configuration
 @EnableAsync
@@ -29,11 +26,4 @@ public class AsyncConfig {
     return executor;
   }
 
-  @Bean
-  public ServletRegistrationBean exampleServletBean() {
-
-    ServletRegistrationBean bean = new ServletRegistrationBean(new CustomServlet(), "/exampleServlet/*");
-    bean.setLoadOnStartup(1);
-    return bean;
-  }
 }

@@ -29,6 +29,12 @@ import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 import com.devonfw.java.training.nonblockingio.service.StorageService;
 import com.devonfw.java.training.nonblockingio.service.exception.StorageFileNotFoundException;
 
+/**
+ * curl --limit-rate 250k http://localhost:7777/mvc/files/1.pdf?clientId=1 --output 1.pdf <br>
+ * curl --limit-rate 250k http://localhost:7777/mvc/files/1.pdf?clientId=1 --output 2.pdf <br>
+ * curl --limit-rate 250k http://localhost:7777/mvc/files/1.pdf?clientId=1 --output 3.pdf <br>
+ *
+ */
 @Controller
 @RequestMapping("mvc")
 public class StorageController {
