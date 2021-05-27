@@ -1,8 +1,12 @@
 package com.devonfw.java.training.nonblockingio.mvc;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.stream.Collectors;
 
+import javax.servlet.AsyncContext;
+import javax.servlet.ReadListener;
+import javax.servlet.ServletInputStream;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
@@ -29,6 +33,10 @@ import com.devonfw.java.training.nonblockingio.service.exception.StorageFileNotF
  * curl --limit-rate 250k http://localhost:7777/mvc/files-async/1.pdf?clientId=1 --output 1.pdf <br>
  * curl --limit-rate 250k http://localhost:7777/mvc/files-async/1.pdf?clientId=2 --output 2.pdf <br>
  * curl --limit-rate 250k http://localhost:7777/mvc/files-async/1.pdf?clientId=3 --output 3.pdf <br>
+ *
+ * curl -X POST -H "Content-Type: application/pdf" --limit-rate 1500k --data-binary @1.pdf http://localhost:7777/mvc/upload-nio?clientId=1 <br>
+ * curl -X POST -H "Content-Type: application/pdf" --limit-rate 1500k --data-binary @1.pdf http://localhost:7777/mvc/upload-nio?clientId=2 <br>
+ * curl -X POST -H "Content-Type: application/pdf" --limit-rate 1500k --data-binary @1.pdf http://localhost:7777/mvc/upload-nio?clientId=3 <br>
  */
 @Controller
 @RequestMapping("mvc")
@@ -59,7 +67,54 @@ public class StorageControllerAsync {
   public String uploadNonblocking(HttpServletRequest request, HttpServletResponse response,
       RedirectAttributes redirectAttributes) throws IOException {
 
+    String clientId = request.getParameter("clientId");
+    final AsyncContext acontext = request.startAsync();
+    long start = System.currentTimeMillis();
+    acontext.setTimeout(0);
+    final ServletInputStream input = request.getInputStream();
+    final ByteArrayOutputStream byteStream = new ByteArrayOutputStream(50000000);
+    input.setReadListener(new ReadListener() {
+      byte buffer[] = new byte[4 * 1024];
+
+      @Override
+      public void onDataAvailable() {
+
+        try {
+          do {
+            int length = input.read(this.buffer);
+            LOG.info("writing {} bytes client {}", length, clientId);
+            byteStream.write(this.buffer, 0, length);
+          } while (input.isReady());
+        } catch (Exception ex) {
+          LOG.error("", ex);
+        }
+      }
+
+      @Override
+      public void onAllDataRead() {
+
+        try {
+          long duration = System.currentTimeMillis() - start;
+          LOG.info("Download finished {} ms", duration);
+          byteStream.flush();
+          StorageControllerAsync.this.storageService.store(byteStream);
+          acontext.getResponse().getWriter()
+              .write("...write succed... " + byteStream.size() + "bytes in " + duration + "ms");
+        } catch (Exception ex) {
+          LOG.error("", ex);
+        }
+        acontext.complete();
+      }
+
+      @Override
+      public void onError(Throwable t) {
+
+        LOG.error("", t);
+      }
+    });
+
     return "redirect:/mvc/storage-async";
+
   }
 
   @PostMapping("upload-async")
