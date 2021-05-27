@@ -1,10 +1,15 @@
 package com.devonfw.java.training.nonblockingio.mvc;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.PrintWriter;
+import java.math.BigInteger;
 import java.util.stream.Collectors;
 
 import javax.servlet.AsyncContext;
+import javax.servlet.ReadListener;
+import javax.servlet.ServletInputStream;
 import javax.servlet.ServletOutputStream;
 import javax.servlet.WriteListener;
 import javax.servlet.http.HttpServletRequest;
@@ -62,27 +67,27 @@ public class StorageControllerAsync {
 
     String clientId = request.getParameter("clientId");
     Resource file = this.storageService.loadAsResource(filename);
-    InputStream input = file.getInputStream();
+    InputStream fileInput = file.getInputStream();
     response.addHeader(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + file.getFilename() + "\"");
 
-    ServletOutputStream output = response.getOutputStream();
-    AsyncContext context = request.startAsync();
+    AsyncContext context = request.startAsync(); // 1
     context.setTimeout(0);
+    ServletOutputStream responeOutput = response.getOutputStream(); // 2
 
-    output.setWriteListener(new WriteListener() {
+    responeOutput.setWriteListener(new WriteListener() { // 3
       @Override
       public void onWritePossible() throws IOException {
 
         byte[] buffer = new byte[1024];
-        while (output.isReady()) {
-          int length = input.read(buffer);
+        while (responeOutput.isReady()) { // 4
+          int length = fileInput.read(buffer);
           if (length > 0) {
             LOG.info("Client {},  writing {} bytes", clientId, length);
-            output.write(buffer, 0, length);
+            responeOutput.write(buffer, 0, length); // 5
           } else {
             LOG.info("Client {} - flush", clientId);
-            output.flush();
-            context.complete();
+            responeOutput.flush(); // 6
+            context.complete(); // 7
             return;
           }
         }
@@ -90,12 +95,106 @@ public class StorageControllerAsync {
       }
 
       @Override
-      public void onError(Throwable t) {
+      public void onError(Throwable t) { // 7
 
         LOG.error("ERROR", t);
         context.complete();
       }
     });
+  }
+
+  @PostMapping("upload-nio")
+  public String handleFileUploadViaStream(HttpServletRequest request, HttpServletResponse response,
+      RedirectAttributes redirectAttributes) throws IOException {
+
+    String clientId = request.getParameter("clientId");
+    final AsyncContext acontext = request.startAsync();
+    long start = System.currentTimeMillis();
+    acontext.setTimeout(0);
+    final ServletInputStream input = request.getInputStream();
+    final ByteArrayOutputStream byteStream = new ByteArrayOutputStream(50000000);
+    input.setReadListener(new ReadListener() {
+      byte buffer[] = new byte[4 * 1024];
+
+      @Override
+      public void onDataAvailable() {
+
+        try {
+          do {
+            int length = input.read(this.buffer);
+            LOG.info("writing {} bytes client {}", length, clientId);
+            byteStream.write(this.buffer, 0, length);
+          } while (input.isReady());
+        } catch (Exception ex) {
+          LOG.error("", ex);
+        }
+      }
+
+      @Override
+      public void onAllDataRead() {
+
+        try {
+          long duration = System.currentTimeMillis() - start;
+          LOG.info("Download finished {} ms", duration);
+          byteStream.flush();
+          StorageControllerAsync.this.storageService.store(byteStream);
+          acontext.getResponse().getWriter()
+              .write("...write succed... " + byteStream.size() + "bytes in " + duration + "ms");
+        } catch (Exception ex) {
+          LOG.error("", ex);
+        }
+        acontext.complete();
+      }
+
+      @Override
+      public void onError(Throwable t) {
+
+        LOG.error("", t);
+      }
+    });
+
+    return "redirect:/mvc/storage-async";
+
+  }
+
+  @PostMapping("upload-block")
+  public String uploadBlocking(HttpServletRequest request, HttpServletResponse response,
+      RedirectAttributes redirectAttributes) throws IOException {
+
+    String clientId = request.getParameter("clientId");
+    long start = System.currentTimeMillis();
+    final ServletInputStream input = request.getInputStream();
+    final ByteArrayOutputStream byteStream = new ByteArrayOutputStream(50000000);
+    byte buffer[] = new byte[4 * 1024];
+    int length = 0;
+
+    do {
+
+      length = input.read(buffer);
+      if (length > 0) {
+        LOG.info("writing {} bytes client {}", length, clientId);
+        byteStream.write(buffer, 0, length);
+      }
+    } while (length > -1);
+
+    long duration = System.currentTimeMillis() - start;
+    LOG.info("Download finished {} ms", duration);
+    byteStream.flush();
+    StorageControllerAsync.this.storageService.store(byteStream);
+
+    PrintWriter writer = response.getWriter();
+    writer.print("...write succed... " + byteStream.size() + "bytes in " + duration + "ms");
+
+    return "redirect:/mvc/storage-async";
+
+  }
+
+  public static BigInteger fib(BigInteger n) {
+
+    if (n.compareTo(BigInteger.ONE) == -1 || n.compareTo(BigInteger.ONE) == 0)
+      return n;
+    else
+      return fib(n.subtract(BigInteger.ONE)).add(fib(n.subtract(BigInteger.ONE).subtract(BigInteger.ONE)));
   }
 
   @PostMapping("upload-async")
