@@ -1,21 +1,14 @@
 package com.devonfw.java.training.nonblockingio.mvc;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.util.stream.Collectors;
 
-import javax.servlet.AsyncContext;
-import javax.servlet.ServletOutputStream;
-import javax.servlet.WriteListener;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
-import com.devonfw.java.training.nonblockingio.service.StorageService;
-import com.devonfw.java.training.nonblockingio.service.exception.StorageFileNotFoundException;
-
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.core.io.Resource;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -29,76 +22,59 @@ import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
+import com.devonfw.java.training.nonblockingio.service.StorageService;
+import com.devonfw.java.training.nonblockingio.service.exception.StorageFileNotFoundException;
+
+/**
+ * curl --limit-rate 250k http://localhost:7777/mvc/files-async/1.pdf?clientId=1 --output 1.pdf <br>
+ * curl --limit-rate 250k http://localhost:7777/mvc/files-async/1.pdf?clientId=2 --output 2.pdf <br>
+ * curl --limit-rate 250k http://localhost:7777/mvc/files-async/1.pdf?clientId=3 --output 3.pdf <br>
+ */
 @Controller
 @RequestMapping("mvc")
 public class StorageControllerAsync {
 
-    @Autowired
-    private StorageService storageService;
+  private static final Logger LOG = LoggerFactory.getLogger(StorageControllerAsync.class);
 
-    @GetMapping("storage-async")
-    public String listUploadedFiles(Model model) throws IOException {
+  @Autowired
+  private StorageService storageService;
 
-        model.addAttribute("files", storageService.loadAll()
-                .map(path -> "/mvc/files-async/" + path.getFileName().toString()).collect(Collectors.toList()));
+  @GetMapping("storage-async")
+  public String listUploadedFiles(Model model) throws IOException {
 
-        return "storage-async";
-    }
+    model.addAttribute("files", this.storageService.loadAll()
+        .map(path -> "/mvc/files-async/" + path.getFileName().toString()).collect(Collectors.toList()));
 
-    @GetMapping("files-async/{filename:.+}")
-    @ResponseBody
-    public void serveFile(@PathVariable String filename, HttpServletRequest request, HttpServletResponse response)
-            throws IOException {
-        Resource file = storageService.loadAsResource(filename);
-        response.addHeader(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + file.getFilename() + "\"");
+    return "storage-async";
+  }
 
-        ServletOutputStream output = response.getOutputStream();
-        AsyncContext context = request.startAsync();
+  @GetMapping("files-async/{filename:.+}")
+  @ResponseBody
+  public void downloadNonblocking(@PathVariable String filename, HttpServletRequest request,
+      HttpServletResponse response) throws IOException {
 
-        // context.setTimeout(2000); // TODO does not work, why
-        output.setWriteListener(new WriteListener() {
-            @Override
-            public void onWritePossible() throws IOException {
-                InputStream input = file.getInputStream();
-                byte[] buffer = new byte[1024];
-                while (output.isReady()) {
-                    int length = input.read(buffer);
-                    if (length > 0) {
-                        output.write(buffer, 0, length);
-                        try {
-                            Thread.sleep(5000);
-                        } catch (InterruptedException e) {
-                            // ignore
-                        }
-                    } else {
-                        output.flush();
-                        context.complete();
-                        return;
-                    }
-                }
+  }
 
-            }
+  @PostMapping("upload-nio")
+  public String uploadNonblocking(HttpServletRequest request, HttpServletResponse response,
+      RedirectAttributes redirectAttributes) throws IOException {
 
-            @Override
-            public void onError(Throwable t) {
-                context.complete();
-            }
-        });
-    }
+    return "redirect:/mvc/storage-async";
+  }
 
-    @PostMapping("upload-async")
-    public String handleFileUpload(@RequestParam("file") MultipartFile file, RedirectAttributes redirectAttributes) {
+  @PostMapping("upload-async")
+  public String handleFileUpload(@RequestParam("file") MultipartFile file, RedirectAttributes redirectAttributes) {
 
-        storageService.store(file);
-        redirectAttributes.addFlashAttribute("message",
-                "You successfully uploaded " + file.getOriginalFilename() + "!");
+    this.storageService.store(file);
+    redirectAttributes.addFlashAttribute("message", "You successfully uploaded " + file.getOriginalFilename() + "!");
 
-        return "redirect:/mvc/storage-async";
-    }
+    return "redirect:/mvc/storage-async";
+  }
 
-    @ExceptionHandler(StorageFileNotFoundException.class)
-    public ResponseEntity<?> handleStorageFileNotFound(StorageFileNotFoundException exc) {
-        return ResponseEntity.notFound().build();
-    }
+  @ExceptionHandler(StorageFileNotFoundException.class)
+  public ResponseEntity<?> handleStorageFileNotFound(StorageFileNotFoundException exc) {
+
+    return ResponseEntity.notFound().build();
+  }
 
 }
